@@ -1,9 +1,8 @@
 name: sync-upstream
 
-# 把上游 merge 进定制分支；冲突则开 issue 停下等人工。
 on:
   schedule:
-    - cron: '0 4 * * *'   # 每天 04:00 UTC = 北京 12:00
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -21,7 +20,7 @@ jobs:
 
       - name: Merge upstream/main into kai-fixes
         env:
-          GH_TOKEN: ${{{{ github.token }}}}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name  "kai-sync-bot"
           git config user.email "bot@kaiklife.dev"
@@ -29,14 +28,14 @@ jobs:
           git fetch --no-tags upstream main
           if git merge --no-edit upstream/main; then
             git push origin HEAD:kai-fixes
-            echo "✅ 上游已合并进 kai-fixes"
+            echo "Upstream merged into kai-fixes"
           else
             git merge --abort
-            TITLE="⚠️ 上游同步冲突：kaiklife/hermes-agent (kai-fixes)"
+            TITLE="sync conflict: kaiklife/hermes-agent (kai-fixes)"
             if [ "$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq 'length')" != "0" ]; then
-              echo "已有未关闭的冲突 issue，跳过创建"
+              echo "open conflict issue already exists, skip"
             else
-              gh issue create --title "$TITLE" --body "上游有新提交，与 kai-fixes 冲突，自动 merge 已中止。需人工解决：本地 fetch 后手动 merge，解决冲突再推 kai-fixes，然后关闭本 issue。"
+              gh issue create --title "$TITLE" --body "Upstream has new commits conflicting with kai-fixes; auto-merge aborted. Resolve manually (fetch, merge, fix conflicts, push kai-fixes), then close this issue."
             fi
             exit 1
           fi

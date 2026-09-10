@@ -1,0 +1,27 @@
+name: upstream-release-watch
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'   # 每周日 03:00 UTC（北京 11:00）
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查上游新 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          UPSTREAM="NousResearch/hermes-agent"
+          LATEST=$(gh release list --repo "$UPSTREAM" --limit 1 --json tagName -q '.[0].tagName')
+          echo "上游最新 release: $LATEST"
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$LATEST" --silent 2>/dev/null; then
+            echo "tag $LATEST 已存在于 fork，跳过"
+          else
+            gh issue create --title "上游出新 release: $LATEST" --body "上游 $UPSTREAM 发布新 release $LATEST。定制分支 kai-fixes 基于 v2026.9.7 (v0.21.1)，请评估是否升级。升级流程见 OpenViking 记忆。"
+            echo "已创建 issue 提醒"
+          fi

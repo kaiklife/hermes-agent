@@ -483,10 +483,15 @@ def _build_native_vision_tool_result(
     """Multimodal tool-result envelope. The text part is intentionally minimal (the model already
     has the question); ``text_summary`` is the fallback for providers without multimodal tool results."""
     text_part = (
-        "Image loaded into your context — you can see it natively now. "
-        "Use your built-in vision to answer the user.")
+        "图片已加载到你的上下文，你现在能直接看到它。"
+        "请先判断主要内容类型，再针对性详细描述："
+        "以人物为主 → 详细描述外貌（发型/脸型/五官/表情）、身材（体型/高矮胖瘦）、穿着（上衣/下装/鞋袜/包/配饰）、姿态动作；"
+        "以文字为主 → 逐字OCR，保持原文与排版，原文照录不翻译；"
+        "风景/环境/场景 → 描述地点线索、环境、光线、色彩氛围；"
+        "混合内容 → 以上相关维度都要覆盖。"
+        "只描述确实看到的，看不清或不确定的标注「不确定」，禁止猜测和脑补。")
     if isinstance(question, str) and question.strip():
-        text_part += f"\n\nQuestion: {question.strip()}"
+        text_part += f"\n\n用户问题：{question.strip()}"
     if scale_note:
         text_part += f"\n\nNote: {scale_note}"
     return {
@@ -883,9 +888,16 @@ async def _handle_vision_analyze(args: Dict[str, Any], **kw: Any) -> str:
         return await _vision_analyze_native(image_url, question, task_id=task_id, region=region)
 
     # Legacy path: aux LLM describes the image and we return its text.
+    # Adaptive describe-then-answer prompt: classify first, then expand per type.
     full_prompt = (
-        "Fully describe and explain everything about this image, then answer the "
-        f"following question:\n\n{question}")
+        "请先判断这张图的主要内容类型，再针对性详细描述：\n"
+        "• 若以人物为主：详细描述外貌（发型/发色/脸型/五官/表情/年龄感）、身材（体型/高矮胖瘦）、"
+        "穿着（上衣/下装/鞋袜/包/配饰）、姿态动作；多个人物逐一描述。\n"
+        "• 若以文字为主（截图/文档/招牌/菜单/票据）：逐字OCR，保持原文与排版，区分主文字与小字，原文照录不翻译。\n"
+        "• 若为风景/环境/场景：描述地点线索、环境、天气/季节、光线、色彩氛围、构图。\n"
+        "• 混合内容：以上相关维度都要覆盖。\n"
+        "通用要求：只描述确实看到的；看不清或不确定的明确写「不确定」；禁止猜测和脑补。\n\n"
+        f"请回答以下问题：\n{question}")
     model = _configured_aux_model(("vision",), ("AUXILIARY_VISION_MODEL",))
     return await vision_analyze_tool(image_url, full_prompt, model, task_id=task_id, region=region)
 

@@ -380,11 +380,15 @@ def _build_children(
         _child_context = t.get("context")
         if _task_schema is not None:
             _child_context = append_output_contract(_child_context, _task_schema)
+        # Per-task model override: only a non-empty string overrides; anything else (absent, null,
+        # empty/whitespace, non-string) falls back to creds["model"] (delegation.model → parent model).
+        _task_model_raw = t.get("model")
+        _task_model = _task_model_raw.strip() if isinstance(_task_model_raw, str) else ""
         try:
             child = _build_child_preserving_parent_tools(
                 task_index=i, goal=t["goal"], context=_child_context,
                 toolsets=None,  # always inherit the parent's toolsets
-                model=creds["model"], max_iterations=max_iterations, task_count=len(task_list),
+                model=_task_model or creds["model"], max_iterations=max_iterations, task_count=len(task_list),
                 parent_agent=parent_agent, role=_normalize_role(t.get("role") or top_role), **overrides,
             )
         except ValueError as exc:
@@ -626,6 +630,14 @@ DELEGATE_TASK_SCHEMA = {
                             "string",
                             "Background THIS child needs: file paths, error messages, constraints. Each child "
                             "sees only its own context — repeat shared background in every task that needs it.",
+                        ),
+                        "model": _p(
+                            "string",
+                            "Optional model override for THIS task only. It must use the same endpoint/provider "
+                            "as this call (same provider, different model is fine — never switch provider). "
+                            "Leave empty to follow delegation.model; if that is unset too, the child inherits "
+                            "the main agent's model. Text-only models are fine; do not pick a non-vision model "
+                            "for a task that must read images.",
                         ),
                         "output_schema": _p(
                             "object",

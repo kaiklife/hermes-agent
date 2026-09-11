@@ -175,6 +175,14 @@ def _read_script_for_guard(env: Any, guard_cwd: str, script_path: str, max_bytes
     return None
 
 
+# Approval key for the gateway lifecycle guard below. Deliberately phrased as a
+# sentence rather than a command glob so it doubles as a literal
+# ``command_allowlist`` entry in config.yaml: the generic allowlist matcher only
+# ever compares a command against a glob, and no real command equals this text,
+# so granting the guard can never widen approval for anything else.
+GATEWAY_LIFECYCLE_PATTERN_KEY = "restart/stop/uninstall the gateway from inside the gateway"
+
+
 def gateway_lifecycle_block(
     *,
     command: str,
@@ -189,7 +197,10 @@ def gateway_lifecycle_block(
     ``systemctl``/``launchctl``/``hermes gateway restart|stop|uninstall``
     targeting hermes-gateway would SIGTERM the gateway — and this very
     subprocess — before completing, so the service may never come back.
-    Applies unconditionally (``force=True`` cannot bypass it). Gated on the
+    Once approved (``tools.approval.approve_gateway_lifecycle``, or the key in
+    ``command_allowlist``) it passes, so the caller can hand the restart to
+    systemd via ``scripts/gateway_restart_detached.sh`` instead of dying with it.
+    Applies to ``force=True`` until then (approval is the only bypass). Gated on the
     SUPERVISED-gateway probe, not the raw ``_HERMES_GATEWAY`` marker: that
     marker leaks into every process that merely imports gateway.run (hermes
     serve, CLI, web server), which must still be able to restart the gateway;
@@ -211,7 +222,11 @@ def gateway_lifecycle_block(
     # Keep the specific launchctl diagnostic when this optional pre-scan fits the
     # budget. The full fail-closed guard below still runs when it does not, so
     # oversized roots never reach shlex here.
-    if lifecycle_scan_root_within_budget(command) and contains_launchctl_submit_command(command):
+    pre_scan_fits_budget = lifecycle_scan_root_within_budget(command)
+    if pre_scan_fits_budget and contains_launchctl_submit_command(command):
+        # Deliberately NOT bypassed by the approval key: registering a persistent
+        # launchd job is unsafe no matter who asked, and a KeepAlive job wrapping
+        # a restart turns one blocked command into a respawn loop (#62891).
         return _blocked_json(
             "Blocked: launchctl submit/bootstrap is restricted inside a supervised "
             "gateway regardless of the job label, to prevent indirect gateway "
@@ -221,6 +236,16 @@ def gateway_lifecycle_block(
             "not by switching launchctl verbs to bypass this rejection.",
             "error",
         )
+    # Approved once, allowed forever — but only for this guard (the launchctl
+    # diagnostic above stays unconditional), and only when the pre-scan could run:
+    # an exhausted budget is not a verdict (see lifecycle_scan_root_within_budget),
+    # so that path must reach the full fail-closed guard below instead of
+    # short-circuiting to an allow here. Ceiling: an approved restart whose command
+    # line blows the 1 MiB scan budget stays blocked; the detached-restart helper is
+    # a short command, so it never does.
+    from tools.approval import is_approved
+    if pre_scan_fits_budget and is_approved(session_key, GATEWAY_LIFECYCLE_PATTERN_KEY):
+        return None
     guard_cwd_base = get_session_cwd(session_key)
     if guard_cwd_base is None:
         guard_cwd_base = getattr(env, "cwd", None) or cwd
@@ -237,7 +262,13 @@ def gateway_lifecycle_block(
             "uninstall the gateway from inside the gateway process. The gateway would "
             "kill this command before it could complete (SIGTERM propagates "
             "to child processes). Run `hermes gateway restart` from a "
-            "separate shell outside the running gateway.",
+            "separate shell outside the running gateway.\n"
+            "To allow it from inside the gateway instead, approve once and it stays "
+            "allowed: run `/approve` and pick the permanent option, or add the line "
+            f"`{GATEWAY_LIFECYCLE_PATTERN_KEY}` to `command_allowlist` in "
+            "config.yaml. Once approved, hand the restart to systemd "
+            "(scripts/gateway_restart_detached.sh) so it survives the gateway it "
+            "is restarting.",
             "error",
         )
     return None

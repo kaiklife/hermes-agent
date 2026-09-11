@@ -366,6 +366,33 @@ def save_permanent_allowlist(patterns: set):
         logger.warning("Could not save allowlist: %s", e)
 
 
+def approve_gateway_lifecycle() -> set:
+    """Grant the supervised-gateway lifecycle guard permanently: now, and after a
+    restart *if the write lands*.
+
+    Mirrors the interactive ``[a]lways`` answer for one specific guard
+    (:data:`tools.terminal_tool_guards.GATEWAY_LIFECYCLE_PATTERN_KEY`), which the
+    terminal tool otherwise refuses unconditionally. ``approve_permanent`` opens
+    it for this process; merging the key into ``command_allowlist`` is what makes
+    it survive, since :func:`load_permanent_allowlist` re-seeds the same set from
+    config on the next start. A failed write is only logged by
+    :func:`save_permanent_allowlist`, leaving the grant in-process. Returns the
+    resulting allowlist.
+    """
+    from tools.terminal_tool_guards import GATEWAY_LIFECYCLE_PATTERN_KEY
+    approve_permanent(GATEWAY_LIFECYCLE_PATTERN_KEY)
+    # Union the in-process set with what is on disk. ``load_permanent_allowlist``
+    # returns an empty set when the config cannot be read, so merging from it alone
+    # would save ``[KEY]`` over the user's existing entries; the in-process set is
+    # seeded from config at import (module-level call at the bottom of this file), so
+    # unioning covers exactly that read-failed case.
+    on_disk = load_permanent_allowlist()
+    with _lock:
+        merged = set(_permanent_approved) | on_disk | {GATEWAY_LIFECYCLE_PATTERN_KEY}
+    save_permanent_allowlist(merged)
+    return merged
+
+
 # --- Bypass check (yolo / mode=off) ---------------------------------------------------------------------------------
 
 def is_approval_bypass_active_for_session(session_key: str) -> bool:

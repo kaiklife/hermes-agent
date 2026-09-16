@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   issues: write
-  workflows: write
 
 jobs:
   sync:
@@ -25,10 +24,15 @@ jobs:
         run: |
           git config user.name  "kai-sync-bot"
           git config user.email "bot@kaiklife.dev"
+          # GITHUB_TOKEN（App 令牌）无权改 .github/workflows/**，靠 .gitattributes 的 merge=ours 保住我们的版本
+          git config merge.ours.driver true
           git remote add upstream https://github.com/NousResearch/hermes-agent.git
           git fetch --no-tags upstream main
           if git merge --no-edit upstream/main; then
-            git push origin HEAD:kai-fixes
+            if ! git push origin HEAD:kai-fixes; then
+              echo "::error::push rejected — check whether the diff touches .github/workflows/** (GITHUB_TOKEN cannot update workflow files)"
+              exit 1
+            fi
             echo "Upstream merged into kai-fixes"
           else
             git merge --abort

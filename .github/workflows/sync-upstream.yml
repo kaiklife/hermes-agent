@@ -18,7 +18,7 @@ jobs:
           ref: kai-fixes
           fetch-depth: 0
 
-      - name: Merge upstream/main into kai-fixes
+      - name: Merge latest upstream release tag into kai-fixes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -26,26 +26,34 @@ jobs:
           git config user.email "bot@kaiklife.dev"
           git remote add upstream https://github.com/NousResearch/hermes-agent.git
           git fetch --no-tags upstream main
-          # GITHUB_TOKEN 是 App 令牌，永远无权 push .github/workflows/** 的改动
-          # （refusing to allow a GitHub App to create or update workflow ... without `workflows` permission）。
-          # 所以合并后把该目录整体还原成我们这边的版本：改过/新增/删掉的一律剥掉，其余照常合。
-          if git merge --no-commit --no-edit upstream/main; then
+          TAG=$(gh release view --repo NousResearch/hermes-agent --json tagName --jq .tagName)
+          if [ -z "$TAG" ]; then
+            echo "::error::could not resolve the latest upstream release tag"
+            exit 1
+          fi
+          git fetch --no-tags upstream "refs/tags/$TAG:refs/tags/$TAG"
+          echo "latest upstream release tag: $TAG"
+          if git merge-base --is-ancestor "$TAG^{commit}" HEAD; then
+            echo "kai-fixes already contains $TAG — nothing to merge"
+            exit 0
+          fi
+          if git merge --no-commit --no-edit "$TAG^{commit}"; then
             git reset -q HEAD -- .github/workflows/
             git checkout -- .github/workflows/
             git clean -fdq .github/workflows/
-            git commit --no-edit
+            git commit --no-edit -m "Merge upstream release $TAG into kai-fixes"
             if ! git push origin HEAD:kai-fixes; then
               echo "::error::push rejected — check whether the diff still touches .github/workflows/**"
               exit 1
             fi
-            echo "Upstream merged into kai-fixes (our workflow files kept)"
+            echo "Upstream release $TAG merged into kai-fixes (our workflow files kept)"
           else
             git merge --abort
             TITLE="sync conflict: kaiklife/hermes-agent (kai-fixes)"
             if [ "$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq 'length')" != "0" ]; then
               echo "open conflict issue already exists, skip"
             else
-              gh issue create --title "$TITLE" --body "Upstream has new commits conflicting with kai-fixes; auto-merge aborted. Resolve manually (fetch, merge, fix conflicts, push kai-fixes), then close this issue."
+              gh issue create --title "$TITLE" --body "Upstream release $TAG conflicts with kai-fixes; auto-merge aborted. Resolve manually (fetch, merge, fix conflicts, push kai-fixes), then close this issue."
             fi
             exit 1
           fi

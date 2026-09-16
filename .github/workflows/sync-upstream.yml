@@ -24,16 +24,21 @@ jobs:
         run: |
           git config user.name  "kai-sync-bot"
           git config user.email "bot@kaiklife.dev"
-          # GITHUB_TOKEN（App 令牌）无权改 .github/workflows/**，靠 .gitattributes 的 merge=ours 保住我们的版本
-          git config merge.ours.driver true
           git remote add upstream https://github.com/NousResearch/hermes-agent.git
           git fetch --no-tags upstream main
-          if git merge --no-edit upstream/main; then
+          # GITHUB_TOKEN 是 App 令牌，永远无权 push .github/workflows/** 的改动
+          # （refusing to allow a GitHub App to create or update workflow ... without `workflows` permission）。
+          # 所以合并后把该目录整体还原成我们这边的版本：改过/新增/删掉的一律剥掉，其余照常合。
+          if git merge --no-commit --no-edit upstream/main; then
+            git reset -q HEAD -- .github/workflows/
+            git checkout -- .github/workflows/
+            git clean -fdq .github/workflows/
+            git commit --no-edit
             if ! git push origin HEAD:kai-fixes; then
-              echo "::error::push rejected — check whether the diff touches .github/workflows/** (GITHUB_TOKEN cannot update workflow files)"
+              echo "::error::push rejected — check whether the diff still touches .github/workflows/**"
               exit 1
             fi
-            echo "Upstream merged into kai-fixes"
+            echo "Upstream merged into kai-fixes (our workflow files kept)"
           else
             git merge --abort
             TITLE="sync conflict: kaiklife/hermes-agent (kai-fixes)"

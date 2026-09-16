@@ -2,7 +2,8 @@ name: sync-upstream
 
 on:
   schedule:
-    - cron: '0 4 * * *'
+    # 19:30 UTC = 北京 03:30：拉完正好赶在 04:30 的本地定时重启之前，重启由 crontab 接手（webhook 侧就不用自己重启了）
+    - cron: '30 19 * * *'
   workflow_dispatch:
 
 permissions:

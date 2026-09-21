@@ -38,23 +38,26 @@ jobs:
             echo "kai-fixes already contains $TAG — nothing to merge"
             exit 0
           fi
-          if git merge --no-commit --no-edit "$TAG^{commit}"; then
-            git reset -q HEAD -- .github/workflows/
-            git checkout -- .github/workflows/
-            git clean -fdq .github/workflows/
-            git commit --no-edit -m "Merge upstream release $TAG into kai-fixes"
-            if ! git push origin HEAD:kai-fixes; then
-              echo "::error::push rejected — check whether the diff still touches .github/workflows/**"
-              exit 1
-            fi
-            echo "Upstream release $TAG merged into kai-fixes (our workflow files kept)"
-          else
-            git merge --abort
+          # .github/workflows/** 永远以我们这边为准（GITHUB_TOKEN 无权推送 workflow 改动），
+          # 所以那里的冲突不算真冲突：合并失败也往下走，整体还原成我们版本，再看剩下有没有真冲突。
+          git merge --no-commit --no-edit "$TAG^{commit}" || true
+          git reset -q HEAD -- .github/workflows/
+          git checkout -- .github/workflows/
+          git clean -fdq .github/workflows/
+          if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+            git merge --abort 2>/dev/null || true
             TITLE="sync conflict: kaiklife/hermes-agent (kai-fixes)"
             if [ "$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq 'length')" != "0" ]; then
               echo "open conflict issue already exists, skip"
             else
-              gh issue create --title "$TITLE" --body "Upstream release $TAG conflicts with kai-fixes; auto-merge aborted. Resolve manually (fetch, merge, fix conflicts, push kai-fixes), then close this issue."
+              gh issue create --title "$TITLE" --body "Upstream release $TAG conflicts with kai-fixes; auto-merge aborted. Resolve manually (fetch, merge, fix conflicts, push kai-fixes), then close this issue." || echo "::warning::could not open the conflict issue"
             fi
+            echo "::error::merge conflict outside .github/workflows — needs manual resolution"
             exit 1
           fi
+          git commit --no-edit -m "Merge upstream release $TAG into kai-fixes"
+          if ! git push origin HEAD:kai-fixes; then
+            echo "::error::push rejected — check whether the diff still touches .github/workflows/**"
+            exit 1
+          fi
+          echo "Upstream release $TAG merged into kai-fixes (our workflow files kept)"

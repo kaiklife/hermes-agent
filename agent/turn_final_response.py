@@ -12,6 +12,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from agent.message_metadata import append_message
+from agent.repetition_guard import is_short_line_loop
 from agent.turn_empty_response import recover_empty_response
 from agent.turn_stop_gates import apply_stop_gates
 
@@ -92,7 +93,19 @@ def finish_text_response(
         and (_content is None or (isinstance(_content, str) and not _content.strip()))
     ):
         _promoted = agent._extract_reasoning(assistant_message) or None
-        if _promoted:
+        if _promoted and is_short_line_loop(_promoted):
+            # A short-line loop is NOT a misplaced answer. Promoting it hands the user the
+            # model's own repetition garbage AND stamps it into ``api_content``, so the next
+            # turn replays the loop byte-identically and the model regenerates it (live
+            # incident: 4 consecutive turns of zh "嗯，好。跑。" delivered as the reply).
+            # Leave it to the empty-response ladder instead.
+            logger.warning(
+                "Reasoning-only clean stop (%d chars) is a degenerate short-line loop — not "
+                "promoting; leaving it to the empty-response ladder (model=%s provider=%s)",
+                len(_promoted), agent.model, agent.provider,
+            )
+            _promoted = None
+        elif _promoted:
             # WARNING, not INFO: a model that keeps ending turns this way is stalled
             # (planning monologue, zero tool calls) while the turn reports "complete".
             logger.warning(

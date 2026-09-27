@@ -3155,6 +3155,25 @@ _PROMOTED_REASONING_PLAN_TAIL_RE = re.compile(
 )
 
 
+# Chinese shares the tail shape but not the segmentation: no \b after the trigger, and the
+# clause boundary is 。！？， (Chinese separates clauses with a full-width comma, so the plan
+# often follows one) rather than ". ". Same scope as the other groups: ONLY the
+# promoted-reasoning path, tail-only. Trigger glosses: "让我/咱们来…",
+# "我来{看,查,试,做,写,改,跑,弄,处理}", "我需要…{action}", "我先…", "接下来我…",
+# "现在我去…". A stated answer that merely mentions one of these mid-sentence still
+# promotes (the tail must be the last sentence).
+_PROMOTED_REASONING_PLAN_TAIL_ZH_RE = re.compile(
+    r"(?:^|[。！？，—–\n]\s*|…\s*)"
+    r"(?:让(?:我|咱)(?:们)?(?:来|先|去)"
+    r"|我来(?:看|查|试|做|写|改|跑|弄|处理)"
+    r"|我需要(?:先|去|来)?(?:看|查|试|做|写|改|跑|确认|检查|读|加载|运行|处理)"
+    r"|我先(?:来|去|看|查|试|做|写|改)"
+    r"|接下来我(?:来|会|要|需要)"
+    r"|现在我去)"
+    r"[^。！？\n]{0,160}(?:[。.…]+)?\s*$"
+)
+
+
 def promoted_reasoning_announces_action(text: str) -> bool:
     """Whether promoted reasoning ENDS on a first-person plan to act (stall, not an answer).
 
@@ -3164,7 +3183,11 @@ def promoted_reasoning_announces_action(text: str) -> bool:
     t = (text or "").strip()
     if not t:
         return False
-    return bool(_PROMOTED_REASONING_PLAN_TAIL_RE.search(t[-240:]))
+    tail = t[-240:]
+    return bool(
+        _PROMOTED_REASONING_PLAN_TAIL_RE.search(tail)
+        or _PROMOTED_REASONING_PLAN_TAIL_ZH_RE.search(tail)
+    )
 
 
 _INTENT_ACK_ON = {"true", "always", "yes", "on"}

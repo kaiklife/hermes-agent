@@ -86,3 +86,27 @@ def _line_repetition_dominated(text: str, n: int) -> bool:
     """True when a single normalized line covers half the fragment via repeats."""
     counts = Counter(norm for norm in (line.strip() for line in text.splitlines()) if norm)
     return any(c >= _MIN_REPEAT_COUNT and c * len(line) >= n * _DOMINANCE_RATIO for line, c in counts.items())
+
+
+# A loop over a few SHORT lines ("嗯，好。\n\n跑。\n\n好。") repeats a block far shorter than
+# ``_REPEAT_WINDOW``, so no sliding window dominates and no single line covers half the text:
+# both detectors above return False on the shape. The distinct-line ratio still separates it
+# cleanly — measured on a live incident (a reasoning-only clean stop delivered to the user):
+# loop 0.25-0.36 vs real replies 0.75-1.00 — so gate on line count + that ratio directly.
+_SHORT_LINE_LOOP_MIN_LINES = 20
+
+
+def is_short_line_loop(text: str) -> bool:
+    """A degenerate loop over a few short lines, without the 60-char window gate.
+
+    :func:`is_repetition_dominated` / :func:`is_runaway_repetition` need a long (60+ char)
+    window to dominate, which a short-line CJK loop never produces. This is the entry point
+    for that shape; it deliberately shares ``_RUNAWAY_DISTINCT_LINE_RATIO`` with the runaway
+    check rather than inventing a second threshold.
+    """
+    if not isinstance(text, str):
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < _SHORT_LINE_LOOP_MIN_LINES:
+        return False
+    return len(set(lines)) <= len(lines) * _RUNAWAY_DISTINCT_LINE_RATIO

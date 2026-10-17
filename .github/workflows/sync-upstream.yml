@@ -1,0 +1,63 @@
+name: sync-upstream
+
+on:
+  schedule:
+    # 19:30 UTC = 北京 03:30：拉完正好赶在 04:30 的本地定时重启之前，重启由 crontab 接手（webhook 侧就不用自己重启了）
+    - cron: '30 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kai-fixes
+          fetch-depth: 0
+
+      - name: Merge latest upstream release tag into kai-fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name  "kai-sync-bot"
+          git config user.email "bot@kaiklife.dev"
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch --no-tags upstream main
+          TAG=$(gh release view --repo NousResearch/hermes-agent --json tagName --jq .tagName)
+          if [ -z "$TAG" ]; then
+            echo "::error::could not resolve the latest upstream release tag"
+            exit 1
+          fi
+          git fetch --no-tags upstream "refs/tags/$TAG:refs/tags/$TAG"
+          echo "latest upstream release tag: $TAG"
+          if git merge-base --is-ancestor "$TAG^{commit}" HEAD; then
+            echo "kai-fixes already contains $TAG — nothing to merge"
+            exit 0
+          fi
+          # .github/workflows/** 永远以我们这边为准（GITHUB_TOKEN 无权推送 workflow 改动），
+          # 所以那里的冲突不算真冲突：合并失败也往下走，整体还原成我们版本，再看剩下有没有真冲突。
+          git merge --no-commit --no-edit "$TAG^{commit}" || true
+          git reset -q HEAD -- .github/workflows/
+          git checkout -- .github/workflows/
+          git clean -fdq .github/workflows/
+          if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+            git merge --abort 2>/dev/null || true
+            TITLE="sync conflict: kaiklife/hermes-agent (kai-fixes)"
+            if [ "$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq 'length')" != "0" ]; then
+              echo "open conflict issue already exists, skip"
+            else
+              gh issue create --title "$TITLE" --body "Upstream release $TAG conflicts with kai-fixes; auto-merge aborted. Resolve manually (fetch, merge, fix conflicts, push kai-fixes), then close this issue." || echo "::warning::could not open the conflict issue"
+            fi
+            echo "::error::merge conflict outside .github/workflows — needs manual resolution"
+            exit 1
+          fi
+          git commit --no-edit -m "Merge upstream release $TAG into kai-fixes"
+          if ! git push origin HEAD:kai-fixes; then
+            echo "::error::push rejected — check whether the diff still touches .github/workflows/**"
+            exit 1
+          fi
+          echo "Upstream release $TAG merged into kai-fixes (our workflow files kept)"
